@@ -3,9 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Menu, Search, Star, Calendar as CalendarIcon, Phone, Contact2, PhoneMissed, PhoneIncoming, PhoneOutgoing, X, ChevronLeft, ChevronRight, Clock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { Capacitor } from '@capacitor/core';
+import { Contacts as CapacitorContacts } from '@capacitor-community/contacts';
 
 // --- Types & Mock Data ---
 
@@ -114,10 +116,10 @@ const BottomNav = ({ activeTab, setActiveTab }: { activeTab: Tab, setActiveTab: 
 
 // --- Views ---
 
-const ContactsView = ({ onSchedule }: { onSchedule: (contact: typeof CONTACTS[0]) => void }) => {
+const ContactsView: React.FC<{ contacts: typeof CONTACTS, onSchedule: (contact: typeof CONTACTS[0]) => void }> = ({ contacts, onSchedule }) => {
   const [searchQuery, setSearchQuery] = useState('');
 
-  const groupedContacts = CONTACTS.reduce((acc, contact) => {
+  const groupedContacts = contacts.reduce((acc, contact) => {
     if (contact.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
         contact.role.toLowerCase().includes(searchQuery.toLowerCase())) {
       if (!acc[contact.letter]) acc[contact.letter] = [];
@@ -151,7 +153,7 @@ const ContactsView = ({ onSchedule }: { onSchedule: (contact: typeof CONTACTS[0]
       </section>
 
       <div className="space-y-16">
-        {Object.entries(groupedContacts).map(([letter, contacts]) => (
+        {(Object.entries(groupedContacts) as [string, typeof CONTACTS][]).map(([letter, groupContacts]) => (
           <div key={letter} className="grid grid-cols-1 lg:grid-cols-[80px_1fr] gap-6">
             <div className="hidden lg:flex flex-col items-center">
               <span className="text-5xl font-black text-surface-container-highest tracking-tighter select-none">
@@ -160,7 +162,7 @@ const ContactsView = ({ onSchedule }: { onSchedule: (contact: typeof CONTACTS[0]
               <div className="w-px h-full bg-surface-container mt-4"></div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-              {contacts.map(contact => (
+              {groupContacts.map(contact => (
                 <div key={contact.id} className="bg-surface-container-lowest p-6 rounded-xl flex flex-col justify-between group hover:bg-surface-bright transition-all duration-300">
                   <div className="flex items-start justify-between mb-6">
                     <div className="w-16 h-16 rounded-full overflow-hidden bg-surface-container-high">
@@ -195,7 +197,7 @@ const ContactsView = ({ onSchedule }: { onSchedule: (contact: typeof CONTACTS[0]
   );
 };
 
-const CallsView = ({ onSchedule }: { onSchedule: (contact: typeof CONTACTS[0]) => void }) => {
+const CallsView: React.FC<{ calls: typeof INITIAL_CALLS, contacts: typeof CONTACTS, onSchedule: (contact: typeof CONTACTS[0]) => void }> = ({ calls, contacts, onSchedule }) => {
   return (
     <motion.div 
       initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
@@ -207,8 +209,15 @@ const CallsView = ({ onSchedule }: { onSchedule: (contact: typeof CONTACTS[0]) =
       </div>
 
       <div className="flex flex-col gap-6">
-        {INITIAL_CALLS.map(call => {
-          const contact = CONTACTS.find(c => c.id === call.contactId)!;
+        {calls.map(call => {
+          const contact = contacts.find(c => c.id === call.contactId) || {
+            id: call.contactId,
+            name: (call as any).name || 'Unknown',
+            role: (call as any).number || 'Unknown Number',
+            image: 'https://ui-avatars.com/api/?name=U',
+            starred: false,
+            letter: 'U'
+          };
           return (
             <div key={call.id} className="bg-surface-container-lowest p-4 sm:p-6 rounded-xl flex items-center justify-between group hover:bg-surface-bright transition-all duration-300">
               <div className="flex items-center gap-4">
@@ -245,7 +254,7 @@ const CallsView = ({ onSchedule }: { onSchedule: (contact: typeof CONTACTS[0]) =
   );
 };
 
-const CalendarView = ({ appointments }: { appointments: typeof INITIAL_APPOINTMENTS }) => {
+const CalendarView: React.FC<{ appointments: typeof INITIAL_APPOINTMENTS }> = ({ appointments }) => {
   const today = new Date();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -487,6 +496,70 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('contacts');
   const [appointments, setAppointments] = useState(INITIAL_APPOINTMENTS);
   const [schedulingContact, setSchedulingContact] = useState<typeof CONTACTS[0] | null>(null);
+  const [contacts, setContacts] = useState(CONTACTS);
+  const [calls, setCalls] = useState(INITIAL_CALLS);
+
+  useEffect(() => {
+    const loadNativeData = async () => {
+      if (Capacitor.isNativePlatform()) {
+        try {
+          // Load Contacts
+          const perm = await CapacitorContacts.requestPermissions();
+          if (perm.contacts === 'granted') {
+            const result = await CapacitorContacts.getContacts({
+              projection: { name: true, phones: true, image: true }
+            });
+            
+            const nativeContacts = result.contacts.map((c, i) => ({
+              id: 1000 + i,
+              name: c.name?.display || 'Unknown',
+              role: c.phones?.[0]?.number || 'No number',
+              image: c.image?.base64String ? `data:image/jpeg;base64,${c.image.base64String}` : 'https://ui-avatars.com/api/?name=' + encodeURIComponent(c.name?.display || 'U'),
+              starred: false,
+              letter: (c.name?.display || 'U').charAt(0).toUpperCase()
+            }));
+            if (nativeContacts.length > 0) {
+              setContacts(nativeContacts);
+            }
+          }
+
+          // Load Call Logs using cordova-plugin-calllog
+          if ((window as any).plugins && (window as any).plugins.callLog) {
+            (window as any).plugins.callLog.hasReadPermission((hasPermission: boolean) => {
+              if (!hasPermission) {
+                (window as any).plugins.callLog.requestReadPermission(() => {
+                  fetchCallLogs();
+                });
+              } else {
+                fetchCallLogs();
+              }
+            });
+          }
+        } catch (e) {
+          console.error("Failed to load native data", e);
+        }
+      }
+    };
+
+    const fetchCallLogs = () => {
+      (window as any).plugins.callLog.getCallLog({ days: 7 }, (data: any[]) => {
+        const nativeCalls = data.map((call: any, i: number) => ({
+          id: 2000 + i,
+          contactId: 1000, // We'd ideally match this to a contact, but for now just use a mock or the first
+          type: call.type === 1 ? 'incoming' : call.type === 2 ? 'outgoing' : 'missed',
+          time: new Date(call.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          date: new Date(call.date).toLocaleDateString(),
+          number: call.number,
+          name: call.cachedName || call.number
+        }));
+        if (nativeCalls.length > 0) {
+          setCalls(nativeCalls);
+        }
+      }, (err: any) => console.error(err));
+    };
+
+    loadNativeData();
+  }, []);
 
   const handleScheduleConfirm = (date: string, time: string) => {
     if (schedulingContact) {
@@ -510,8 +583,8 @@ export default function App() {
       
       <main className="pt-24 px-6 sm:px-8 lg:px-16 max-w-7xl mx-auto">
         <AnimatePresence mode="wait">
-          {activeTab === 'contacts' && <ContactsView key="contacts" onSchedule={setSchedulingContact} />}
-          {activeTab === 'calls' && <CallsView key="calls" onSchedule={setSchedulingContact} />}
+          {activeTab === 'contacts' && <ContactsView key="contacts" contacts={contacts} onSchedule={setSchedulingContact} />}
+          {activeTab === 'calls' && <CallsView key="calls" calls={calls} contacts={contacts} onSchedule={setSchedulingContact} />}
           {activeTab === 'calendar' && <CalendarView key="calendar" appointments={appointments} />}
         </AnimatePresence>
       </main>

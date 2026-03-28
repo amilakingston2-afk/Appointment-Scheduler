@@ -1,0 +1,6 @@
+{
+	"appId": "com.precisionarchitect.app",
+	"appName": "Precision Architect",
+	"webDir": "dist",
+	"bundledWebRuntime": false
+}

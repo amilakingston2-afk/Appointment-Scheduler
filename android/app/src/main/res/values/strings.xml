@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Precision Architect</string>
+    <string name="title_activity_main">Precision Architect</string>
+    <string name="package_name">com.precisionarchitect.app</string>
+    <string name="custom_url_scheme">com.precisionarchitect.app</string>
+</resources>
